@@ -1,0 +1,8 @@
+@import "tailwindcss";
+@custom-variant dark (&:is(.dark *));
+
+body {
+  font-family: 'IBM Plex Mono', monospace;
+  margin: 0;
+  padding: 0;
+}
