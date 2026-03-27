@@ -94,7 +94,17 @@ export function TableNode({ id, data, selected }: { id: string; data: TableData;
                 {/* Body / Fields */}
                 <div className="flex flex-col py-1">
                     {data.fields.map((field) => (
-                        <div key={field.id} className="relative flex items-center px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50 group/field">
+                        <div
+                            key={field.id}
+                            className="relative flex items-center px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50 group/field"
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                window.dispatchEvent(new CustomEvent('field-context-menu', {
+                                    detail: { x: e.clientX, y: e.clientY, nodeId: id, fieldId: field.id }
+                                }));
+                            }}
+                        >
                             {/* Target Handle (Left) */}
                             <Handle
                                 type="target"
