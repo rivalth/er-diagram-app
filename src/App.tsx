@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -16,8 +16,9 @@ import { Toolbar } from './components/Toolbar';
 import { RelationshipEdge } from './components/RelationshipEdge';
 import { ContextMenu, type ContextMenuSection } from './components/ContextMenu';
 import { SelectionToolbar } from './components/SelectionToolbar';
-import { Plus, Copy, Trash2, ArrowUp, ArrowDown, Key, CopyPlus, MousePointerSquareDashed } from 'lucide-react';
+import { Plus, Copy, Trash2, ArrowUp, ArrowDown, Key, CopyPlus, MousePointerSquareDashed, Clipboard } from 'lucide-react';
 import type { TableData, Field } from './types';
+import { v4 as uuidv4 } from 'uuid';
 
 const nodeTypes = {
   table: TableNode,
@@ -36,16 +37,26 @@ interface ContextMenuState {
   fieldId?: string;
 }
 
+interface ClipboardNode {
+  data: TableData;
+  offsetX: number;
+  offsetY: number;
+}
+
 function DiagramFlow() {
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect, setDiagram, theme,
-    addTable, deleteTable, cloneTable, addField, deleteEdge, updateEdge,
+    addTable, deleteTable, deleteTables, cloneTable, addField, deleteEdge, updateEdge,
     removeField, duplicateField, moveField
   } = useDiagramStore();
   const [isLoaded, setIsLoaded] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const reactFlowInstance = useReactFlow();
+
+  // Clipboard & mouse tracking
+  const clipboardRef = useRef<ClipboardNode[]>([]);
+  const mousePositionRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Load from local storage on mount
   useEffect(() => {
@@ -99,6 +110,92 @@ function DiagramFlow() {
       document.documentElement.classList.remove('dark');
     }
   }, [theme]);
+
+  // Track mouse position on ReactFlow pane
+  const handleMouseMove = useCallback((event: React.MouseEvent) => {
+    mousePositionRef.current = { x: event.clientX, y: event.clientY };
+  }, []);
+
+  // Copy/Paste/Delete keyboard handlers
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept when typing in inputs/textareas/contenteditable
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+
+      const isMeta = e.metaKey || e.ctrlKey;
+
+      // Cmd+C / Ctrl+C — Copy selected nodes
+      if (isMeta && e.key === 'c') {
+        const selected = nodes.filter(n => selectedNodeIds.includes(n.id));
+        if (selected.length === 0) return;
+
+        const centerX = selected.reduce((sum, n) => sum + n.position.x, 0) / selected.length;
+        const centerY = selected.reduce((sum, n) => sum + n.position.y, 0) / selected.length;
+
+        clipboardRef.current = selected.map(n => ({
+          data: JSON.parse(JSON.stringify(n.data)) as TableData,
+          offsetX: n.position.x - centerX,
+          offsetY: n.position.y - centerY,
+        }));
+
+        e.preventDefault();
+        return;
+      }
+
+      // Cmd+V / Ctrl+V — Paste at mouse position
+      if (isMeta && e.key === 'v') {
+        if (clipboardRef.current.length === 0) return;
+
+        const flowPos = reactFlowInstance.screenToFlowPosition(mousePositionRef.current);
+
+        const newNodes: Node[] = clipboardRef.current.map(item => ({
+          id: uuidv4(),
+          type: 'table' as const,
+          position: {
+            x: flowPos.x + item.offsetX,
+            y: flowPos.y + item.offsetY,
+          },
+          data: {
+            ...item.data,
+            name: `${item.data.name}`,
+            fields: item.data.fields.map((f: Field) => ({ ...f, id: uuidv4() })),
+          },
+        }));
+
+        const store = useDiagramStore.getState();
+        store.setDiagram([...store.nodes, ...newNodes], store.edges);
+
+        // Select the newly pasted nodes
+        setTimeout(() => {
+          const pastedIds = newNodes.map(n => n.id);
+          onNodesChange([
+            ...nodes.map(n => ({ type: 'select' as const, id: n.id, selected: false })),
+            ...pastedIds.map(id => ({ type: 'select' as const, id, selected: true })),
+          ]);
+          setSelectedNodeIds(pastedIds);
+        }, 50);
+
+        e.preventDefault();
+        return;
+      }
+
+      // Delete / Backspace — Delete selected nodes
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedNodeIds.length > 0) {
+          deleteTables(selectedNodeIds);
+          setSelectedNodeIds([]);
+          e.preventDefault();
+        }
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [nodes, edges, selectedNodeIds, reactFlowInstance, onNodesChange, deleteTables]);
 
   // Track selected nodes
   const handleSelectionChange = useCallback((params: OnSelectionChangeParams) => {
@@ -160,6 +257,7 @@ function DiagramFlow() {
 
     switch (contextMenu.type) {
       case 'canvas': {
+        const hasCopied = clipboardRef.current.length > 0;
         return [
           {
             items: [
@@ -173,6 +271,32 @@ function DiagramFlow() {
                   });
                   addTable(pos);
                 },
+              },
+              {
+                label: `Paste${hasCopied ? ` (${clipboardRef.current.length})` : ''}`,
+                icon: <Clipboard size={14} />,
+                onClick: () => {
+                  if (clipboardRef.current.length === 0) return;
+                  const flowPos = reactFlowInstance.screenToFlowPosition({
+                    x: contextMenu.x,
+                    y: contextMenu.y,
+                  });
+                  const newNodes: Node[] = clipboardRef.current.map(item => ({
+                    id: uuidv4(),
+                    type: 'table' as const,
+                    position: {
+                      x: flowPos.x + item.offsetX,
+                      y: flowPos.y + item.offsetY,
+                    },
+                    data: {
+                      ...item.data,
+                      fields: item.data.fields.map((f: Field) => ({ ...f, id: uuidv4() })),
+                    },
+                  }));
+                  const store = useDiagramStore.getState();
+                  store.setDiagram([...store.nodes, ...newNodes], store.edges);
+                },
+                disabled: !hasCopied,
               },
             ],
           },
@@ -314,7 +438,10 @@ function DiagramFlow() {
   if (!isLoaded) return null;
 
   return (
-    <div className="w-screen h-screen overflow-hidden bg-[#f3f4f6] dark:bg-gray-950 transition-colors duration-300">
+    <div
+      className="w-screen h-screen overflow-hidden bg-[#f3f4f6] dark:bg-gray-950 transition-colors duration-300"
+      onMouseMove={handleMouseMove}
+    >
       <Toolbar />
       <ReactFlow
         nodes={nodes}
@@ -331,7 +458,7 @@ function DiagramFlow() {
         selectionOnDrag
         selectionMode={SelectionMode.Partial}
         multiSelectionKeyCode="Meta"
-        deleteKeyCode="Delete"
+        deleteKeyCode={null}
         onSelectionChange={handleSelectionChange}
         // Context menus
         onPaneContextMenu={handlePaneContextMenu}
