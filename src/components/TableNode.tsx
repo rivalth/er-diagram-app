@@ -1,7 +1,67 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Handle, Position, NodeResizer } from '@xyflow/react';
 import type { TableData, Field } from '../types';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { Trash2, Plus, Key, Link } from 'lucide-react';
+
+/**
+ * A controlled input that keeps local state to prevent cursor jumping.
+ * Syncs to the store on blur and after a short debounce while typing.
+ */
+function StableInput({
+    value: externalValue,
+    onChange,
+    className,
+    ...props
+}: {
+    value: string;
+    onChange: (value: string) => void;
+    className?: string;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value'>) {
+    const [localValue, setLocalValue] = useState(externalValue);
+    const isEditingRef = useRef(false);
+    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Sync external → local only when NOT actively editing
+    useEffect(() => {
+        if (!isEditingRef.current) {
+            setLocalValue(externalValue);
+        }
+    }, [externalValue]);
+
+    const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const newVal = e.target.value;
+        setLocalValue(newVal);
+        isEditingRef.current = true;
+
+        // Debounced sync to store
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => {
+            onChange(newVal);
+        }, 300);
+    }, [onChange]);
+
+    const handleBlur = useCallback(() => {
+        isEditingRef.current = false;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        onChange(localValue);
+    }, [localValue, onChange]);
+
+    const handleFocus = useCallback(() => {
+        isEditingRef.current = true;
+    }, []);
+
+    return (
+        <input
+            value={localValue}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            onFocus={handleFocus}
+            className={className}
+            {...props}
+        />
+    );
+}
 
 export function TableNode({ id, data, selected }: { id: string; data: TableData; selected: boolean }) {
     const { deleteTable, addField, updateField, removeField, updateTable } = useDiagramStore();
@@ -9,17 +69,17 @@ export function TableNode({ id, data, selected }: { id: string; data: TableData;
     return (
         <>
             <NodeResizer
-                color="#9ca3af" // Tailwind gray-400
+                color="#9ca3af"
                 isVisible={selected}
-                minWidth={256} // 64rem * 4 default starting width
+                minWidth={256}
                 handleClassName="w-2 h-2 rounded bg-gray-400"
             />
             <div className="bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm hover:shadow-md hover:border-gray-400 dark:hover:border-gray-500 transition-all duration-200 w-full h-full text-sm font-mono flex flex-col overflow-hidden group focus-within:ring-2 focus-within:ring-gray-300/50 dark:focus-within:ring-gray-600/50">
                 {/* Header */}
                 <div className="bg-gray-800 dark:bg-gray-950 text-white px-3 py-2 flex items-center justify-between cursor-grab title-handle">
-                    <input
+                    <StableInput
                         value={data.name}
-                        onChange={(e) => updateTable(id, { name: e.target.value })}
+                        onChange={(val) => updateTable(id, { name: val })}
                         className="bg-transparent font-bold outline-none ring-0 w-full focus:bg-gray-700 dark:focus:bg-gray-800 rounded px-1 -ml-1 transition-colors"
                     />
                     <button
@@ -56,14 +116,14 @@ export function TableNode({ id, data, selected }: { id: string; data: TableData;
                                 <Key size={14} className={field.isPrimaryKey ? "fill-current" : ""} />
                             </button>
 
-                            {/* Dropdown for Foreign Key (Optional Extra Polish) */}
+                            {/* Dropdown for Foreign Key */}
                             {field.isForeignKey && (
                                 <Link size={12} className="text-gray-400 absolute left-8" />
                             )}
 
-                            <input
+                            <StableInput
                                 value={field.name}
-                                onChange={(e) => updateField(id, field.id, { name: e.target.value })}
+                                onChange={(val) => updateField(id, field.id, { name: val })}
                                 className={`flex-1 bg-transparent pr-12 outline-none focus:bg-gray-100 dark:focus:bg-gray-800 rounded px-1 ml-1 font-medium transition-colors ${field.isPrimaryKey ? 'text-gray-900 dark:text-white font-bold' : 'text-gray-700 dark:text-gray-300'}`}
                             />
 

@@ -2,10 +2,21 @@ import { useDiagramStore } from '../store/useDiagramStore';
 import { Plus, Code2, Sun, Moon } from 'lucide-react';
 import { CodeModal } from './CodeModal';
 import { useState } from 'react';
+import { useReactFlow } from '@xyflow/react';
 
 export function Toolbar() {
     const { addTable, theme, toggleTheme } = useDiagramStore();
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const reactFlowInstance = useReactFlow();
+
+    const handleAddTable = () => {
+        // Convert screen center to flow coordinates
+        const centerPosition = reactFlowInstance.screenToFlowPosition({
+            x: window.innerWidth / 2,
+            y: window.innerHeight / 2,
+        });
+        addTable(centerPosition);
+    };
 
     return (
         <>
@@ -13,7 +24,7 @@ export function Toolbar() {
                 <div className="font-bold border-r border-gray-300 dark:border-gray-600 pr-4 text-gray-800 dark:text-gray-100">ER Studio</div>
 
                 <button
-                    onClick={() => addTable({ x: 100, y: 100 })}
+                    onClick={handleAddTable}
                     className="flex items-center gap-2 text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white !bg-gray-100 dark:!bg-gray-700 hover:!bg-gray-200 dark:hover:!bg-gray-600 px-3 py-1.5 !rounded transition-all duration-150 hover:scale-[1.02] active:scale-[0.98] !border-transparent cursor-pointer"
                     style={{ border: 'none' }}
                 >
