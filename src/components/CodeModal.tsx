@@ -1,16 +1,123 @@
 import { useState, useEffect } from 'react';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { X, Save, Download } from 'lucide-react';
-import type { DiagramJSON } from '../types';
+import type { DiagramJSON, Field, FieldType } from '../types';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-json';
 import 'prismjs/components/prism-sql';
 import 'prismjs/themes/prism-tomorrow.css';
+import { v4 as uuidv4 } from 'uuid';
 
 interface CodeModalProps {
     isOpen: boolean;
     onClose: () => void;
+}
+
+// SQL type → app type mapping
+const sqlTypeToAppType = (sqlType: string): FieldType => {
+    const upper = sqlType.toUpperCase().replace(/\(.*\)/, '').trim();
+    const map: Record<string, FieldType> = {
+        'INT': 'int',
+        'INTEGER': 'int',
+        'BIGINT': 'int',
+        'SMALLINT': 'int',
+        'TINYINT': 'int',
+        'SERIAL': 'int',
+        'VARCHAR': 'string',
+        'CHAR': 'string',
+        'TEXT': 'string',
+        'NVARCHAR': 'string',
+        'FLOAT': 'number',
+        'DOUBLE': 'number',
+        'REAL': 'number',
+        'BOOLEAN': 'boolean',
+        'BOOL': 'boolean',
+        'BIT': 'boolean',
+        'DATE': 'date',
+        'DATETIME': 'date',
+        'TIMESTAMP': 'date',
+        'TIME': 'date',
+        'DECIMAL': 'decimal',
+        'NUMERIC': 'decimal',
+        'MONEY': 'decimal',
+    };
+    return map[upper] || 'string';
+};
+
+// Parse CREATE TABLE statements from SQL
+function parseSqlToTables(sql: string): { name: string; fields: Field[] }[] {
+    const tables: { name: string; fields: Field[] }[] = [];
+
+    // Match CREATE TABLE blocks
+    const createTableRegex = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?(\w+)[`"']?\s*\(([\s\S]*?)\)\s*;/gi;
+    let match;
+
+    while ((match = createTableRegex.exec(sql)) !== null) {
+        const tableName = match[1];
+        const body = match[2];
+
+        // Split by commas that are not inside parentheses
+        const parts: string[] = [];
+        let depth = 0;
+        let current = '';
+        for (const char of body) {
+            if (char === '(') depth++;
+            else if (char === ')') depth--;
+            else if (char === ',' && depth === 0) {
+                parts.push(current.trim());
+                current = '';
+                continue;
+            }
+            current += char;
+        }
+        if (current.trim()) parts.push(current.trim());
+
+        const fields: Field[] = [];
+        const pkFields = new Set<string>();
+
+        // First pass: find table-level PRIMARY KEY constraints
+        for (const part of parts) {
+            const pkMatch = part.match(/^\s*PRIMARY\s+KEY\s*\(([^)]+)\)/i);
+            if (pkMatch) {
+                pkMatch[1].split(',').forEach(f => pkFields.add(f.trim().replace(/[`"']/g, '')));
+            }
+        }
+
+        // Second pass: parse fields
+        for (const part of parts) {
+            const trimmed = part.trim();
+
+            // Skip constraints (PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, CONSTRAINT, INDEX)
+            if (/^\s*(PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK|CONSTRAINT|INDEX|KEY)/i.test(trimmed)) {
+                continue;
+            }
+            // Skip ALTER-like or empty
+            if (!trimmed || /^\s*--/.test(trimmed)) continue;
+
+            // Parse: field_name TYPE ... [PRIMARY KEY] ...
+            const fieldMatch = trimmed.match(/^[`"']?(\w+)[`"']?\s+(\w+(?:\([^)]*\))?)/i);
+            if (fieldMatch) {
+                const fieldName = fieldMatch[1];
+                const fieldType = fieldMatch[2];
+                const isPK = /PRIMARY\s+KEY/i.test(trimmed) || pkFields.has(fieldName);
+
+                fields.push({
+                    id: uuidv4(),
+                    name: fieldName,
+                    type: sqlTypeToAppType(fieldType),
+                    isPrimaryKey: isPK,
+                    isForeignKey: false,
+                });
+            }
+        }
+
+        if (fields.length > 0) {
+            tables.push({ name: tableName, fields });
+        }
+    }
+
+    return tables;
 }
 
 export function CodeModal({ isOpen, onClose }: CodeModalProps) {
@@ -89,7 +196,7 @@ export function CodeModal({ isOpen, onClose }: CodeModalProps) {
 
     if (!isOpen) return null;
 
-    const handleApply = () => {
+    const handleApplyJson = () => {
         try {
             const json = JSON.parse(code) as DiagramJSON;
 
@@ -129,6 +236,41 @@ export function CodeModal({ isOpen, onClose }: CodeModalProps) {
         }
     };
 
+    const handleApplySql = () => {
+        try {
+            const parsedTables = parseSqlToTables(sqlCode);
+
+            if (parsedTables.length === 0) {
+                setError('No valid CREATE TABLE statements found. Make sure your SQL uses standard CREATE TABLE syntax.');
+                return;
+            }
+
+            // Position tables in a grid layout
+            const COLS = 3;
+            const SPACING_X = 350;
+            const SPACING_Y = 300;
+
+            const newNodes = parsedTables.map((table, i) => ({
+                id: uuidv4(),
+                type: 'table',
+                position: {
+                    x: 100 + (i % COLS) * SPACING_X,
+                    y: 100 + Math.floor(i / COLS) * SPACING_Y,
+                },
+                data: {
+                    name: table.name,
+                    fields: table.fields,
+                },
+            }));
+
+            setDiagram(newNodes, []);
+            setError(null);
+            onClose();
+        } catch (err) {
+            setError('Failed to parse SQL. Please check your syntax.');
+        }
+    };
+
     const handleDownload = () => {
         const blob = new Blob([code], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -149,11 +291,11 @@ export function CodeModal({ isOpen, onClose }: CodeModalProps) {
                         <h2 className="font-bold">Export / Import</h2>
                         <div className="flex bg-gray-700 dark:bg-gray-800 rounded text-sm">
                             <button
-                                onClick={() => setActiveTab('json')}
+                                onClick={() => { setActiveTab('json'); setError(null); }}
                                 className={`px-3 py-1 transition-colors border-none cursor-pointer rounded-l ${activeTab === 'json' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white bg-transparent'}`}
                             >JSON</button>
                             <button
-                                onClick={() => setActiveTab('sql')}
+                                onClick={() => { setActiveTab('sql'); setError(null); }}
                                 className={`px-3 py-1 transition-colors border-none cursor-pointer rounded-r ${activeTab === 'sql' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white bg-transparent'}`}
                             >SQL</button>
                         </div>
@@ -170,8 +312,10 @@ export function CodeModal({ isOpen, onClose }: CodeModalProps) {
                         onValueChange={(newCode) => {
                             if (activeTab === 'json') {
                                 setCode(newCode);
-                                setError(null);
+                            } else {
+                                setSqlCode(newCode);
                             }
+                            setError(null);
                         }}
                         highlight={(codeToHighlight) => {
                             const grammar = activeTab === 'json' ? Prism.languages.json : Prism.languages.sql;
@@ -179,14 +323,13 @@ export function CodeModal({ isOpen, onClose }: CodeModalProps) {
                             return Prism.highlight(codeToHighlight, grammar, language);
                         }}
                         padding={16}
-                        readOnly={activeTab === 'sql'}
                         className="w-full min-h-full font-mono text-sm text-gray-100"
                         style={{
                             fontFamily: '"IBM Plex Mono", monospace',
                             outline: 'none',
                         }}
                     />
-                    {error && activeTab === 'json' && (
+                    {error && (
                         <div className="absolute bottom-4 left-4 right-4 bg-red-100 border border-red-300 text-red-700 px-3 py-2 rounded text-xs shadow-sm">
                             {error}
                         </div>
@@ -231,10 +374,18 @@ export function CodeModal({ isOpen, onClose }: CodeModalProps) {
                         </button>
                         {activeTab === 'json' && (
                             <button
-                                onClick={handleApply}
+                                onClick={handleApplyJson}
                                 className="flex items-center gap-2 px-4 py-2 bg-gray-800 dark:bg-blue-600 text-white rounded hover:bg-gray-700 dark:hover:bg-blue-500 transition-colors text-sm font-medium border-none cursor-pointer"
                             >
                                 <Save size={14} /> Apply Changes
+                            </button>
+                        )}
+                        {activeTab === 'sql' && (
+                            <button
+                                onClick={handleApplySql}
+                                className="flex items-center gap-2 px-4 py-2 bg-gray-800 dark:bg-blue-600 text-white rounded hover:bg-gray-700 dark:hover:bg-blue-500 transition-colors text-sm font-medium border-none cursor-pointer"
+                            >
+                                <Save size={14} /> Apply SQL
                             </button>
                         )}
                     </div>
