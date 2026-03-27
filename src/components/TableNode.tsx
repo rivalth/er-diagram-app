@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Handle, Position, NodeResizer } from '@xyflow/react';
 import type { TableData, Field } from '../types';
 import { useDiagramStore } from '../store/useDiagramStore';
-import { Trash2, Plus, Key, Link } from 'lucide-react';
+import { Trash2, Plus, Key, Link, GripVertical } from 'lucide-react';
 
 /**
  * A controlled input that keeps local state to prevent cursor jumping.
@@ -64,7 +64,50 @@ function StableInput({
 }
 
 export function TableNode({ id, data, selected }: { id: string; data: TableData; selected: boolean }) {
-    const { deleteTable, addField, updateField, removeField, updateTable } = useDiagramStore();
+    const { deleteTable, addField, updateField, removeField, updateTable, reorderFields } = useDiagramStore();
+    const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+    const dragIndexRef = useRef<number | null>(null);
+
+    const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+        dragIndexRef.current = index;
+        e.dataTransfer.effectAllowed = 'move';
+        // Set minimal drag data
+        e.dataTransfer.setData('text/plain', String(index));
+        // Make the dragged element semi-transparent
+        if (e.currentTarget instanceof HTMLElement) {
+            e.currentTarget.style.opacity = '0.4';
+        }
+    }, []);
+
+    const handleDragEnd = useCallback((e: React.DragEvent) => {
+        if (e.currentTarget instanceof HTMLElement) {
+            e.currentTarget.style.opacity = '1';
+        }
+        dragIndexRef.current = null;
+        setDragOverIndex(null);
+    }, []);
+
+    const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        setDragOverIndex(index);
+    }, []);
+
+    const handleDragLeave = useCallback(() => {
+        setDragOverIndex(null);
+    }, []);
+
+    const handleDrop = useCallback((e: React.DragEvent, toIndex: number) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const fromIndex = dragIndexRef.current;
+        if (fromIndex !== null && fromIndex !== toIndex) {
+            reorderFields(id, fromIndex, toIndex);
+        }
+        dragIndexRef.current = null;
+        setDragOverIndex(null);
+    }, [id, reorderFields]);
 
     return (
         <>
@@ -93,10 +136,18 @@ export function TableNode({ id, data, selected }: { id: string; data: TableData;
 
                 {/* Body / Fields */}
                 <div className="flex flex-col py-1">
-                    {data.fields.map((field) => (
+                    {data.fields.map((field, index) => (
                         <div
                             key={field.id}
-                            className="relative flex items-center px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50 group/field"
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, index)}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={(e) => handleDragOver(e, index)}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleDrop(e, index)}
+                            className={`relative flex items-center px-1 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50 group/field transition-all ${
+                                dragOverIndex === index ? 'border-t-2 border-blue-500' : 'border-t-2 border-transparent'
+                            }`}
                             onContextMenu={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
@@ -105,6 +156,11 @@ export function TableNode({ id, data, selected }: { id: string; data: TableData;
                                 }));
                             }}
                         >
+                            {/* Drag Handle */}
+                            <div className="flex-shrink-0 cursor-grab active:cursor-grabbing text-gray-300 dark:text-gray-600 opacity-0 group-hover/field:opacity-100 transition-opacity px-0.5 nopan">
+                                <GripVertical size={12} />
+                            </div>
+
                             {/* Target Handle (Left) */}
                             <Handle
                                 type="target"

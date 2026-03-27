@@ -36,6 +36,7 @@ export interface DiagramState {
     removeField: (tableId: string, fieldId: string) => void;
     duplicateField: (tableId: string, fieldId: string) => void;
     moveField: (tableId: string, fieldId: string, direction: 'up' | 'down') => void;
+    reorderFields: (tableId: string, fromIndex: number, toIndex: number) => void;
     updateEdge: (edgeId: string, label: string) => void;
     updateEdgeWaypoint: (edgeId: string, waypointX: number, waypointY: number) => void;
     deleteEdge: (edgeId: string) => void;
@@ -258,6 +259,25 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
                     const newIndex = direction === 'up' ? index - 1 : index + 1;
                     if (newIndex < 0 || newIndex >= fields.length) return node;
                     [fields[index], fields[newIndex]] = [fields[newIndex], fields[index]];
+                    return {
+                        ...node,
+                        data: { ...tData, fields },
+                    };
+                }
+                return node;
+            }),
+        });
+    },
+
+    reorderFields: (tableId, fromIndex, toIndex) => {
+        set({
+            nodes: get().nodes.map((node) => {
+                if (node.id === tableId) {
+                    const tData = node.data as TableData;
+                    const fields = [...tData.fields];
+                    if (fromIndex < 0 || fromIndex >= fields.length || toIndex < 0 || toIndex >= fields.length) return node;
+                    const [moved] = fields.splice(fromIndex, 1);
+                    fields.splice(toIndex, 0, moved);
                     return {
                         ...node,
                         data: { ...tData, fields },
