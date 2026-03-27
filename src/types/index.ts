@@ -14,6 +14,12 @@ export interface TableData extends Record<string, unknown> {
     fields: Field[];
 }
 
+export interface Template {
+    id: string;
+    name: string;
+    fields: Omit<Field, 'id'>[];
+}
+
 // Diagram JSON format exactly as requested by user
 export interface RelationshipJSON {
     id: string;
