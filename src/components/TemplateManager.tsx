@@ -12,7 +12,7 @@ interface TemplateManagerProps {
 const FIELD_TYPES: FieldType[] = ['int', 'string', 'number', 'boolean', 'date', 'decimal'];
 
 export function TemplateManager({ isOpen, onClose }: TemplateManagerProps) {
-    const { templates, addTemplate, updateTemplate, deleteTemplate, theme } = useDiagramStore();
+    const { templates, addTemplate, updateTemplate, deleteTemplate } = useDiagramStore();
     const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
     const [isCreating, setIsCreating] = useState(false);
 
