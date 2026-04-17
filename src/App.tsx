@@ -127,8 +127,22 @@ function DiagramFlow() {
 
       const isMeta = e.metaKey || e.ctrlKey;
 
+      // Cmd+Z / Ctrl+Z — Undo
+      if (isMeta && !e.shiftKey && e.key === 'z') {
+        useDiagramStore.getState().undo();
+        e.preventDefault();
+        return;
+      }
+
+      // Cmd+Shift+Z / Ctrl+Shift+Z / Cmd+Y / Ctrl+Y — Redo
+      if (isMeta && ((e.shiftKey && e.key.toLowerCase() === 'z') || e.key.toLowerCase() === 'y')) {
+        useDiagramStore.getState().redo();
+        e.preventDefault();
+        return;
+      }
+
       // Cmd+C / Ctrl+C — Copy selected nodes
-      if (isMeta && e.key === 'c') {
+      if (isMeta && e.key.toLowerCase() === 'c') {
         const selected = nodes.filter(n => selectedNodeIds.includes(n.id));
         if (selected.length === 0) return;
 
@@ -146,7 +160,7 @@ function DiagramFlow() {
       }
 
       // Cmd+V / Ctrl+V — Paste at mouse position
-      if (isMeta && e.key === 'v') {
+      if (isMeta && e.key.toLowerCase() === 'v') {
         if (clipboardRef.current.length === 0) return;
 
         const flowPos = reactFlowInstance.screenToFlowPosition(mousePositionRef.current);
@@ -460,10 +474,16 @@ function DiagramFlow() {
         multiSelectionKeyCode="Meta"
         deleteKeyCode={null}
         onSelectionChange={handleSelectionChange}
+        onNodeDragStart={() => useDiagramStore.getState().saveHistory()}
         // Context menus
         onPaneContextMenu={handlePaneContextMenu}
         onNodeContextMenu={handleNodeContextMenu}
         onEdgeContextMenu={handleEdgeContextMenu}
+        onPaneClick={closeContextMenu}
+        onPaneScroll={closeContextMenu}
+        // Zoom bounds
+        minZoom={0.05}
+        maxZoom={2}
         fitView
         className="bg-[#f3f4f6] dark:bg-gray-950 transition-colors duration-300"
       >

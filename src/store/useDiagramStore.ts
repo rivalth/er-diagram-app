@@ -19,9 +19,20 @@ import { v4 as uuidv4 } from 'uuid';
 
 export type TableNode = Node<TableData, 'table'>;
 
+export interface DiagramSnapshot {
+    nodes: Node[];
+    edges: Edge[];
+}
+
 export interface DiagramState {
     nodes: Node[];
     edges: Edge[];
+    // History
+    past: DiagramSnapshot[];
+    future: DiagramSnapshot[];
+    saveHistory: () => void;
+    undo: () => void;
+    redo: () => void;
     onNodesChange: OnNodesChange;
     onEdgesChange: OnEdgesChange;
     onConnect: OnConnect;
@@ -68,6 +79,52 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     nodes: [],
     edges: [],
     templates: loadTemplates(),
+    past: [],
+    future: [],
+
+    saveHistory: () => {
+        const { nodes, edges, past } = get();
+        const clone = (obj: any) => JSON.parse(JSON.stringify(obj));
+        const currentSnapshot = { nodes: clone(nodes), edges: clone(edges) };
+        const newPast = [...past, currentSnapshot].slice(-50);
+        set({ past: newPast, future: [] });
+    },
+
+    undo: () => {
+        const { past, nodes, edges, future } = get();
+        if (past.length === 0) return;
+        
+        const previous = past[past.length - 1];
+        const newPast = past.slice(0, past.length - 1);
+        
+        const clone = (obj: any) => JSON.parse(JSON.stringify(obj));
+        const currentSnapshot = { nodes: clone(nodes), edges: clone(edges) };
+        
+        set({
+            nodes: previous.nodes,
+            edges: previous.edges,
+            past: newPast,
+            future: [currentSnapshot, ...future].slice(-50),
+        });
+    },
+
+    redo: () => {
+        const { past, nodes, edges, future } = get();
+        if (future.length === 0) return;
+        
+        const next = future[0];
+        const newFuture = future.slice(1);
+        
+        const clone = (obj: any) => JSON.parse(JSON.stringify(obj));
+        const currentSnapshot = { nodes: clone(nodes), edges: clone(edges) };
+        
+        set({
+            nodes: next.nodes,
+            edges: next.edges,
+            past: [...past, currentSnapshot].slice(-50),
+            future: newFuture,
+        });
+    },
 
     onNodesChange: (changes: NodeChange<Node>[]) => {
         set({
@@ -80,6 +137,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         });
     },
     onConnect: (connection: Connection) => {
+        get().saveHistory();
         const edge = { ...connection, type: 'custom' };
         set({
             edges: addEdge(edge, get().edges),
@@ -87,6 +145,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     addTable: (position, templateFields) => {
+        get().saveHistory();
         const fields: Field[] = templateFields
             ? templateFields.map(f => ({ ...f, id: uuidv4() }))
             : [{ id: uuidv4(), name: 'id', type: 'int', isPrimaryKey: true }];
@@ -104,6 +163,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     updateTable: (id, data) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === id) {
@@ -115,6 +175,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     deleteTable: (id) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.filter((node) => node.id !== id),
             edges: get().edges.filter((edge) => edge.source !== id && edge.target !== id),
@@ -122,6 +183,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     deleteTables: (ids) => {
+        get().saveHistory();
         const idSet = new Set(ids);
         set({
             nodes: get().nodes.filter((node) => !idSet.has(node.id)),
@@ -130,6 +192,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     cloneTable: (id) => {
+        get().saveHistory();
         const node = get().nodes.find((n) => n.id === id);
         if (!node) return;
         const tData = node.data as TableData;
@@ -147,6 +210,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     cloneTables: (ids) => {
+        get().saveHistory();
         const cloned: TableNode[] = [];
         for (const id of ids) {
             const node = get().nodes.find((n) => n.id === id);
@@ -166,6 +230,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     addField: (tableId) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -184,6 +249,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     updateField: (tableId, fieldId, data) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -202,6 +268,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     removeField: (tableId, fieldId) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -223,6 +290,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     duplicateField: (tableId, fieldId) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -249,6 +317,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     moveField: (tableId, fieldId, direction) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -270,6 +339,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     reorderFields: (tableId, fromIndex, toIndex) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -289,6 +359,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     updateEdge: (edgeId, label) => {
+        get().saveHistory();
         set({
             edges: get().edges.map((edge) => {
                 if (edge.id === edgeId) {
@@ -299,6 +370,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         });
     },
     updateEdgeWaypoint: (edgeId, waypointX, waypointY) => {
+        get().saveHistory();
         set({
             edges: get().edges.map((edge) => {
                 if (edge.id === edgeId) {
@@ -309,13 +381,14 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         });
     },
     deleteEdge: (edgeId) => {
+        get().saveHistory();
         set({
             edges: get().edges.filter((edge) => edge.id !== edgeId),
         });
     },
 
     setDiagram: (nodes, edges) => {
-        set({ nodes, edges });
+        set({ nodes, edges, past: [], future: [] });
     },
 
     toggleTheme: () => {

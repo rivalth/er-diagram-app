@@ -46,6 +46,15 @@ export function RelationshipEdge(props: EdgeProps) {
 
     return (
         <g className={`transition-all duration-300 ${selected ? 'drop-shadow-[0_0_4px_rgba(59,130,246,0.6)]' : ''}`}>
+            {/* Invisible, wider hit area path for easier hovering/clicking */}
+            <path
+                d={path}
+                fill="none"
+                strokeOpacity={0}
+                strokeWidth={24}
+                className="react-flow__edge-interaction cursor-pointer"
+            />
+            {/* Visible path */}
             <BaseEdge
                 path={path}
                 markerEnd={markerEnd}
@@ -64,7 +73,7 @@ export function RelationshipEdge(props: EdgeProps) {
                         pointerEvents: 'all',
                         zIndex: selected ? 1000 : 10,
                     }}
-                    className="nodrag nopan flex items-center justify-center p-2"
+                    className="nodrag nopan flex items-center justify-center p-4"
                 >
                     <button
                         onClick={toggleRelationship}
