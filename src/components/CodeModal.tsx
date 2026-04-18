@@ -147,10 +147,12 @@ export function CodeModal({ isOpen, onClose }: CodeModalProps) {
                 relationships: edges.map(edge => ({
                     id: edge.id,
                     source: edge.source,
-                    sourceField: edge.sourceHandle!,
+                    sourceField: (edge.sourceHandle || '').replace(/-left$|-right$/, ''),
                     target: edge.target,
-                    targetField: edge.targetHandle!,
+                    targetField: (edge.targetHandle || '').replace(/-left$|-right$/, ''),
                     type: (edge.data?.label as string) || '1:M',
+                    sourceSide: edge.data?.sourceSide || 'right',
+                    targetSide: edge.data?.targetSide || 'left',
                 })),
             };
             setCode(JSON.stringify(data, null, 2));
@@ -219,12 +221,14 @@ export function CodeModal({ isOpen, onClose }: CodeModalProps) {
             const newEdges = json.relationships.map(rel => ({
                 id: rel.id,
                 source: rel.source,
-                sourceHandle: rel.sourceField,
+                sourceHandle: `${rel.sourceField}-${(rel as any).sourceSide || 'right'}`,
                 target: rel.target,
-                targetHandle: rel.targetField,
+                targetHandle: `${rel.targetField}-${(rel as any).targetSide || 'left'}`,
                 type: 'custom',
                 data: {
                     label: rel.type || '1:M',
+                    sourceSide: (rel as any).sourceSide || 'right',
+                    targetSide: (rel as any).targetSide || 'left',
                 }
             }));
 
