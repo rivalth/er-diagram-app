@@ -3,6 +3,7 @@ import {
     addEdge,
     applyNodeChanges,
     applyEdgeChanges,
+    reconnectEdge,
 } from '@xyflow/react';
 import type {
     Connection,
@@ -17,11 +18,46 @@ import type {
 import type { TableData, Field, Template } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
+// Helper: extract side ('left' | 'right') from a suffixed handle ID like 'f1-left'
+function getSideFromHandle(handleId: string | null | undefined): 'left' | 'right' {
+    if (handleId?.endsWith('-left')) return 'left';
+    return 'right'; // default to right
+}
+
+// Helper: strip the -left/-right suffix to get the raw field ID
+function stripHandleSuffix(handleId: string | null | undefined): string {
+    return (handleId || '').replace(/-left$|-right$/, '');
+}
+
+// Helper: ensure a handle ID has a suffix, adding a default if missing
+function ensureHandleSuffix(handleId: string | null | undefined, defaultSide: 'left' | 'right'): string {
+    const id = handleId || '';
+    if (id.endsWith('-left') || id.endsWith('-right')) return id;
+    return `${id}-${defaultSide}`;
+}
+
 export type TableNode = Node<TableData, 'table'>;
+
+export interface DiagramSnapshot {
+    nodes: Node[];
+    edges: Edge[];
+}
+
+export interface MagnetState {
+    stage: 'idle' | 'active' | 'dragging';
+    edgeId: string | null;
+    end: 'source' | 'target' | null;
+}
 
 export interface DiagramState {
     nodes: Node[];
     edges: Edge[];
+    // History
+    past: DiagramSnapshot[];
+    future: DiagramSnapshot[];
+    saveHistory: () => void;
+    undo: () => void;
+    redo: () => void;
     onNodesChange: OnNodesChange;
     onEdgesChange: OnEdgesChange;
     onConnect: OnConnect;
@@ -40,9 +76,24 @@ export interface DiagramState {
     updateEdge: (edgeId: string, label: string) => void;
     updateEdgeWaypoint: (edgeId: string, waypointX: number, waypointY: number) => void;
     deleteEdge: (edgeId: string) => void;
+    deleteEdges: (edgeIds: string[]) => void;
+    reconnectDiagramEdge: (oldEdge: Edge, newConnection: Connection) => void;
     setDiagram: (nodes: Node[], edges: Edge[]) => void;
     theme: 'light' | 'dark';
     toggleTheme: () => void;
+
+    // Magnet Edge Transfer Feature
+    magnetState: MagnetState;
+    setMagnetActive: (edgeId: string, end: 'source' | 'target') => void;
+    setMagnetDragging: () => void;
+    cancelMagnet: () => void;
+    completeMagnetTransfer: (nodeId: string, handleId: string) => void;
+
+    // Custom Edge Routing Tracker
+    connectionDraft: { sourceSide: 'left' | 'right' | null, targetSide: 'left' | 'right' | null };
+    setConnectionDraftSource: (side: 'left' | 'right' | null) => void;
+    setConnectionDraftTarget: (side: 'left' | 'right' | null) => void;
+
     // Templates
     templates: Template[];
     addTemplate: (template: Template) => void;
@@ -68,6 +119,54 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     nodes: [],
     edges: [],
     templates: loadTemplates(),
+    past: [],
+    future: [],
+    magnetState: { stage: 'idle', edgeId: null, end: null },
+    connectionDraft: { sourceSide: null, targetSide: null },
+
+    saveHistory: () => {
+        const { nodes, edges, past } = get();
+        const clone = (obj: any) => JSON.parse(JSON.stringify(obj));
+        const currentSnapshot = { nodes: clone(nodes), edges: clone(edges) };
+        const newPast = [...past, currentSnapshot].slice(-50);
+        set({ past: newPast, future: [] });
+    },
+
+    undo: () => {
+        const { past, nodes, edges, future } = get();
+        if (past.length === 0) return;
+
+        const previous = past[past.length - 1];
+        const newPast = past.slice(0, past.length - 1);
+
+        const clone = (obj: any) => JSON.parse(JSON.stringify(obj));
+        const currentSnapshot = { nodes: clone(nodes), edges: clone(edges) };
+
+        set({
+            nodes: previous.nodes,
+            edges: previous.edges,
+            past: newPast,
+            future: [currentSnapshot, ...future].slice(-50),
+        });
+    },
+
+    redo: () => {
+        const { past, nodes, edges, future } = get();
+        if (future.length === 0) return;
+
+        const next = future[0];
+        const newFuture = future.slice(1);
+
+        const clone = (obj: any) => JSON.parse(JSON.stringify(obj));
+        const currentSnapshot = { nodes: clone(nodes), edges: clone(edges) };
+
+        set({
+            nodes: next.nodes,
+            edges: next.edges,
+            past: [...past, currentSnapshot].slice(-50),
+            future: newFuture,
+        });
+    },
 
     onNodesChange: (changes: NodeChange<Node>[]) => {
         set({
@@ -80,13 +179,20 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         });
     },
     onConnect: (connection: Connection) => {
-        const edge = { ...connection, type: 'custom' };
+        get().saveHistory();
+        const customData = {
+            label: '1:M',
+            sourceSide: getSideFromHandle(connection.sourceHandle),
+            targetSide: getSideFromHandle(connection.targetHandle),
+        };
+        const edge = { ...connection, type: 'custom', data: customData };
         set({
             edges: addEdge(edge, get().edges),
         });
     },
 
     addTable: (position, templateFields) => {
+        get().saveHistory();
         const fields: Field[] = templateFields
             ? templateFields.map(f => ({ ...f, id: uuidv4() }))
             : [{ id: uuidv4(), name: 'id', type: 'int', isPrimaryKey: true }];
@@ -104,6 +210,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     updateTable: (id, data) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === id) {
@@ -115,6 +222,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     deleteTable: (id) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.filter((node) => node.id !== id),
             edges: get().edges.filter((edge) => edge.source !== id && edge.target !== id),
@@ -122,6 +230,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     deleteTables: (ids) => {
+        get().saveHistory();
         const idSet = new Set(ids);
         set({
             nodes: get().nodes.filter((node) => !idSet.has(node.id)),
@@ -130,6 +239,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     cloneTable: (id) => {
+        get().saveHistory();
         const node = get().nodes.find((n) => n.id === id);
         if (!node) return;
         const tData = node.data as TableData;
@@ -147,6 +257,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     cloneTables: (ids) => {
+        get().saveHistory();
         const cloned: TableNode[] = [];
         for (const id of ids) {
             const node = get().nodes.find((n) => n.id === id);
@@ -166,6 +277,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     addField: (tableId) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -184,6 +296,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     updateField: (tableId, fieldId, data) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -202,6 +315,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     removeField: (tableId, fieldId) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -217,12 +331,17 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
                 return node;
             }),
             edges: get().edges.filter(
-                (edge) => !(edge.source === tableId && edge.sourceHandle === fieldId) && !(edge.target === tableId && edge.targetHandle === fieldId)
+                (edge) => {
+                    const srcField = stripHandleSuffix(edge.sourceHandle);
+                    const tgtField = stripHandleSuffix(edge.targetHandle);
+                    return !(edge.source === tableId && srcField === fieldId) && !(edge.target === tableId && tgtField === fieldId);
+                }
             ),
         });
     },
 
     duplicateField: (tableId, fieldId) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -249,6 +368,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     moveField: (tableId, fieldId, direction) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -270,6 +390,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     reorderFields: (tableId, fromIndex, toIndex) => {
+        get().saveHistory();
         set({
             nodes: get().nodes.map((node) => {
                 if (node.id === tableId) {
@@ -289,6 +410,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     },
 
     updateEdge: (edgeId, label) => {
+        get().saveHistory();
         set({
             edges: get().edges.map((edge) => {
                 if (edge.id === edgeId) {
@@ -299,6 +421,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         });
     },
     updateEdgeWaypoint: (edgeId, waypointX, waypointY) => {
+        get().saveHistory();
         set({
             edges: get().edges.map((edge) => {
                 if (edge.id === edgeId) {
@@ -309,13 +432,40 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         });
     },
     deleteEdge: (edgeId) => {
+        get().saveHistory();
         set({
             edges: get().edges.filter((edge) => edge.id !== edgeId),
         });
     },
+    deleteEdges: (edgeIds: string[]) => {
+        if (!edgeIds?.length) return;
+        get().saveHistory();
+        const idSet = new Set(edgeIds);
+        set({
+            edges: get().edges.filter((edge) => !idSet.has(edge.id)),
+        });
+    },
+    reconnectDiagramEdge: (oldEdge, newConnection) => {
+        get().saveHistory();
+        set({
+            edges: reconnectEdge(oldEdge, newConnection, get().edges),
+        });
+    },
 
     setDiagram: (nodes, edges) => {
-        set({ nodes, edges });
+        // Migrate old edges that don't have handle suffixes
+        const migratedEdges = edges.map(e => ({
+            ...e,
+            sourceHandle: ensureHandleSuffix(e.sourceHandle, 'right'),
+            targetHandle: ensureHandleSuffix(e.targetHandle, 'left'),
+            data: {
+                ...e.data,
+                label: e.data?.label || '1:M',
+                sourceSide: e.data?.sourceSide || getSideFromHandle(e.sourceHandle),
+                targetSide: e.data?.targetSide || getSideFromHandle(e.targetHandle),
+            }
+        }));
+        set({ nodes, edges: migratedEdges, past: [], future: [] });
     },
 
     toggleTheme: () => {
@@ -341,5 +491,41 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         const newTemplates = get().templates.filter((t) => t.id !== id);
         saveTemplates(newTemplates);
         set({ templates: newTemplates });
+    },
+
+    setConnectionDraftSource: (side) => set((state) => ({ connectionDraft: { ...state.connectionDraft, sourceSide: side } })),
+    setConnectionDraftTarget: (side) => set((state) => ({ connectionDraft: { ...state.connectionDraft, targetSide: side } })),
+
+    setMagnetActive: (edgeId, end) => set({
+        magnetState: { stage: 'active', edgeId, end }
+    }),
+
+    setMagnetDragging: () => set((state) => ({
+        magnetState: { ...state.magnetState, stage: 'dragging' }
+    })),
+
+    cancelMagnet: () => set({
+        magnetState: { stage: 'idle', edgeId: null, end: null }
+    }),
+
+    completeMagnetTransfer: (nodeId, handleId) => {
+        const { magnetState, edges, saveHistory } = get();
+        if (magnetState.stage !== 'dragging' || !magnetState.edgeId || !magnetState.end) return;
+
+        const newSide = getSideFromHandle(handleId);
+        saveHistory();
+        set({
+            edges: edges.map((edge) => {
+                if (edge.id === magnetState.edgeId) {
+                    if (magnetState.end === 'source') {
+                        return { ...edge, source: nodeId, sourceHandle: handleId, data: { ...edge.data, sourceSide: newSide } };
+                    } else {
+                        return { ...edge, target: nodeId, targetHandle: handleId, data: { ...edge.data, targetSide: newSide } };
+                    }
+                }
+                return edge;
+            }),
+            magnetState: { stage: 'idle', edgeId: null, end: null },
+        });
     },
 }));

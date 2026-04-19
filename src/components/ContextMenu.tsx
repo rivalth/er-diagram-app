@@ -26,7 +26,7 @@ export function ContextMenu({ x, y, sections, onClose }: ContextMenuProps) {
 
     // Close on click outside or Escape
     useEffect(() => {
-        const handleClick = (e: MouseEvent) => {
+        const handleClick = (e: MouseEvent | TouchEvent) => {
             if (menuRef.current && !menuRef.current.contains(e.target as HTMLElement)) {
                 onClose();
             }
@@ -34,11 +34,16 @@ export function ContextMenu({ x, y, sections, onClose }: ContextMenuProps) {
         const handleKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
         };
-        document.addEventListener('mousedown', handleClick);
-        document.addEventListener('keydown', handleKey);
+        
+        // Use capture phase (true) to intercept events before other libraries handle them
+        document.addEventListener('mousedown', handleClick, true);
+        document.addEventListener('touchstart', handleClick, true);
+        document.addEventListener('keydown', handleKey, true);
+        
         return () => {
-            document.removeEventListener('mousedown', handleClick);
-            document.removeEventListener('keydown', handleKey);
+            document.removeEventListener('mousedown', handleClick, true);
+            document.removeEventListener('touchstart', handleClick, true);
+            document.removeEventListener('keydown', handleKey, true);
         };
     }, [onClose]);
 

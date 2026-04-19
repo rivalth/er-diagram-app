@@ -1,12 +1,12 @@
 import { useDiagramStore } from '../store/useDiagramStore';
-import { Plus, Code2, Sun, Moon, Layout, ChevronDown } from 'lucide-react';
+import { Plus, Code2, Sun, Moon, Layout, ChevronDown, Undo2, Redo2 } from 'lucide-react';
 import { CodeModal } from './CodeModal';
 import { TemplateManager } from './TemplateManager';
 import { useState, useRef, useEffect } from 'react';
 import { useReactFlow } from '@xyflow/react';
 
 export function Toolbar() {
-    const { addTable, theme, toggleTheme, templates } = useDiagramStore();
+    const { addTable, theme, toggleTheme, templates, past, future, undo, redo } = useDiagramStore();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -47,7 +47,27 @@ export function Toolbar() {
     return (
         <>
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg shadow-md px-4 py-2 flex items-center gap-4 font-mono text-sm transition-colors duration-300">
-                <div className="font-bold border-r border-gray-300 dark:border-gray-600 pr-4 text-gray-800 dark:text-gray-100">ER Studio</div>
+                <div className="font-bold border-r border-gray-300 dark:border-gray-600 pr-4 text-gray-800 dark:text-gray-100 flex items-center gap-3">
+                    ER Studio
+                    <div className="flex items-center gap-1 pl-3 border-l border-gray-300 dark:border-gray-600">
+                        <button
+                            onClick={undo}
+                            disabled={past.length === 0}
+                            className="p-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer bg-transparent border-none rounded transition-colors flex items-center justify-center"
+                            title="Undo (Cmd+Z)"
+                        >
+                            <Undo2 size={16} />
+                        </button>
+                        <button
+                            onClick={redo}
+                            disabled={future.length === 0}
+                            className="p-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer bg-transparent border-none rounded transition-colors flex items-center justify-center"
+                            title="Redo (Cmd+Shift+Z)"
+                        >
+                            <Redo2 size={16} />
+                        </button>
+                    </div>
+                </div>
 
                 {/* New Table - with dropdown for templates */}
                 <div ref={dropdownRef} className="relative">

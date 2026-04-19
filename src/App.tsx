@@ -6,8 +6,9 @@ import {
   ReactFlowProvider,
   SelectionMode,
   useReactFlow,
+  ConnectionMode,
 } from '@xyflow/react';
-import type { Node, Edge, OnSelectionChangeParams } from '@xyflow/react';
+import type { Node, Edge, OnSelectionChangeParams, Connection } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import { useDiagramStore } from './store/useDiagramStore';
@@ -16,6 +17,7 @@ import { Toolbar } from './components/Toolbar';
 import { RelationshipEdge } from './components/RelationshipEdge';
 import { ContextMenu, type ContextMenuSection } from './components/ContextMenu';
 import { SelectionToolbar } from './components/SelectionToolbar';
+import { CustomConnectionLine } from './components/CustomConnectionLine';
 import { Plus, Copy, Trash2, ArrowUp, ArrowDown, Key, CopyPlus, MousePointerSquareDashed, Clipboard } from 'lucide-react';
 import type { TableData, Field } from './types';
 import { v4 as uuidv4 } from 'uuid';
@@ -46,12 +48,13 @@ interface ClipboardNode {
 function DiagramFlow() {
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect, setDiagram, theme,
-    addTable, deleteTable, deleteTables, cloneTable, addField, deleteEdge, updateEdge,
-    removeField, duplicateField, moveField
+    addTable, deleteTable, deleteTables, cloneTable, addField, deleteEdge, deleteEdges, updateEdge,
+    removeField, duplicateField, moveField, reconnectDiagramEdge, cancelMagnet
   } = useDiagramStore();
   const [isLoaded, setIsLoaded] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   const reactFlowInstance = useReactFlow();
 
   // Clipboard & mouse tracking
@@ -127,8 +130,22 @@ function DiagramFlow() {
 
       const isMeta = e.metaKey || e.ctrlKey;
 
+      // Cmd+Z / Ctrl+Z — Undo
+      if (isMeta && !e.shiftKey && e.key === 'z') {
+        useDiagramStore.getState().undo();
+        e.preventDefault();
+        return;
+      }
+
+      // Cmd+Shift+Z / Ctrl+Shift+Z / Cmd+Y / Ctrl+Y — Redo
+      if (isMeta && ((e.shiftKey && e.key.toLowerCase() === 'z') || e.key.toLowerCase() === 'y')) {
+        useDiagramStore.getState().redo();
+        e.preventDefault();
+        return;
+      }
+
       // Cmd+C / Ctrl+C — Copy selected nodes
-      if (isMeta && e.key === 'c') {
+      if (isMeta && e.key.toLowerCase() === 'c') {
         const selected = nodes.filter(n => selectedNodeIds.includes(n.id));
         if (selected.length === 0) return;
 
@@ -146,7 +163,7 @@ function DiagramFlow() {
       }
 
       // Cmd+V / Ctrl+V — Paste at mouse position
-      if (isMeta && e.key === 'v') {
+      if (isMeta && e.key.toLowerCase() === 'v') {
         if (clipboardRef.current.length === 0) return;
 
         const flowPos = reactFlowInstance.screenToFlowPosition(mousePositionRef.current);
@@ -184,22 +201,34 @@ function DiagramFlow() {
 
       // Delete / Backspace — Delete selected nodes
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        let changed = false;
         if (selectedNodeIds.length > 0) {
           deleteTables(selectedNodeIds);
           setSelectedNodeIds([]);
-          e.preventDefault();
+          changed = true;
         }
+        if (selectedEdgeIds.length > 0) {
+          deleteEdges(selectedEdgeIds);
+          setSelectedEdgeIds([]);
+          changed = true;
+        }
+        if (changed) e.preventDefault();
         return;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [nodes, edges, selectedNodeIds, reactFlowInstance, onNodesChange, deleteTables]);
+  }, [nodes, edges, selectedNodeIds, selectedEdgeIds, reactFlowInstance, onNodesChange, deleteTables, deleteEdges]);
+
+  const onReconnect = useCallback((oldEdge: Edge, newConnection: Connection) => {
+    reconnectDiagramEdge(oldEdge, newConnection);
+  }, [reconnectDiagramEdge]);
 
   // Track selected nodes
   const handleSelectionChange = useCallback((params: OnSelectionChangeParams) => {
     setSelectedNodeIds(params.nodes.map(n => n.id));
+    setSelectedEdgeIds(params.edges.map(e => e.id));
   }, []);
 
   // Canvas context menu
@@ -249,7 +278,10 @@ function DiagramFlow() {
     return () => window.removeEventListener('field-context-menu' as any, handler);
   }, []);
 
-  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+    cancelMagnet();
+  }, [cancelMagnet]);
 
   // Build context menu sections based on type
   const getContextMenuSections = useCallback((): ContextMenuSection[] => {
@@ -449,8 +481,11 @@ function DiagramFlow() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onReconnect={onReconnect}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        connectionMode={ConnectionMode.Loose}
+        connectionLineComponent={CustomConnectionLine}
         defaultEdgeOptions={{
           type: 'custom',
         }}
@@ -460,10 +495,16 @@ function DiagramFlow() {
         multiSelectionKeyCode="Meta"
         deleteKeyCode={null}
         onSelectionChange={handleSelectionChange}
+        onNodeDragStart={() => useDiagramStore.getState().saveHistory()}
         // Context menus
         onPaneContextMenu={handlePaneContextMenu}
         onNodeContextMenu={handleNodeContextMenu}
         onEdgeContextMenu={handleEdgeContextMenu}
+        onPaneClick={closeContextMenu}
+        onPaneScroll={closeContextMenu}
+        // Zoom bounds
+        minZoom={0.05}
+        maxZoom={2}
         fitView
         className="bg-[#f3f4f6] dark:bg-gray-950 transition-colors duration-300"
       >
