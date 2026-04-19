@@ -113,8 +113,8 @@ export const RelationshipEdge = memo(function RelationshipEdge(props: EdgeProps)
     const nodeTarget = reactFlowInstance.getNode(target);
     const sourceWidth = nodeSource?.measured?.width || 250;
     const targetWidth = nodeTarget?.measured?.width || 250;
-    const srcPosX = nodeSource?.positionAbsolute?.x ?? nodeSource?.position?.x ?? sourceX;
-    const tgtPosX = nodeTarget?.positionAbsolute?.x ?? nodeTarget?.position?.x ?? targetX;
+    const srcPosX = nodeSource?.position?.x ?? sourceX;
+    const tgtPosX = nodeTarget?.position?.x ?? targetX;
 
     const strictSourceX = nodeSource ? (sourceSide === 'left' ? srcPosX : srcPosX + sourceWidth) : sourceX;
     const strictTargetX = nodeTarget ? (targetSide === 'left' ? tgtPosX : tgtPosX + targetWidth) : targetX;
