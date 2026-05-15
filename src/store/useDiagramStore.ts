@@ -5,6 +5,7 @@ import {
     applyEdgeChanges,
     reconnectEdge,
 } from '@xyflow/react';
+import dagre from 'dagre';
 import type {
     Connection,
     Edge,
@@ -52,6 +53,7 @@ export interface MagnetState {
 export interface DiagramState {
     nodes: Node[];
     edges: Edge[];
+    layoutVersion: number;
     // History
     past: DiagramSnapshot[];
     future: DiagramSnapshot[];
@@ -81,6 +83,7 @@ export interface DiagramState {
     setDiagram: (nodes: Node[], edges: Edge[]) => void;
     theme: 'light' | 'dark';
     toggleTheme: () => void;
+    autoArrange: (options?: AutoArrangeOptions) => void;
 
     // Magnet Edge Transfer Feature
     magnetState: MagnetState;
@@ -101,6 +104,28 @@ export interface DiagramState {
     deleteTemplate: (id: string) => void;
 }
 
+export interface AutoArrangeOptions {
+    direction?: 'LR' | 'RL' | 'TB' | 'BT';
+    nodeSep?: number;
+    rankSep?: number;
+    marginX?: number;
+    marginY?: number;
+}
+
+const DEFAULT_NODE_WIDTH = 256;
+const DEFAULT_NODE_HEIGHT = 120;
+
+const getNodeSize = (node: Node): { width: number; height: number } => {
+    const data = node.data as Partial<TableData> | undefined;
+    const fieldCount = Array.isArray(data?.fields) ? data.fields.length : 0;
+
+    const width = node.width ?? node.measured?.width ?? DEFAULT_NODE_WIDTH;
+    const estimatedHeight = Math.max(DEFAULT_NODE_HEIGHT, 88 + fieldCount * 32);
+    const height = node.height ?? node.measured?.height ?? estimatedHeight;
+
+    return { width, height };
+};
+
 const loadTemplates = (): Template[] => {
     try {
         const saved = localStorage.getItem('er-diagram-templates-v1');
@@ -118,6 +143,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     theme: (localStorage.getItem('er-diagram-theme') as 'light' | 'dark') || 'light',
     nodes: [],
     edges: [],
+    layoutVersion: 0,
     templates: loadTemplates(),
     past: [],
     future: [],
@@ -472,6 +498,98 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         const next = get().theme === 'light' ? 'dark' : 'light';
         localStorage.setItem('er-diagram-theme', next);
         set({ theme: next });
+    },
+
+    autoArrange: (options) => {
+        const { nodes, edges, saveHistory, layoutVersion } = get();
+        if (!nodes.length) return;
+    
+        saveHistory();
+    
+        const graph = new dagre.graphlib.Graph();
+        graph.setDefaultEdgeLabel(() => ({}));
+        graph.setGraph({
+            rankdir: options?.direction ?? 'LR',
+            nodesep: options?.nodeSep ?? 150,
+            ranksep: options?.rankSep ?? 200,
+            marginx: options?.marginX ?? 200,
+            marginy: options?.marginY ?? 200,
+        });
+    
+        const nodeIds = new Set(nodes.map((node) => node.id));
+        nodes.forEach((node) => {
+            const size = getNodeSize(node);
+            graph.setNode(node.id, size);
+        });
+    
+        edges.forEach((edge) => {
+            if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target) || edge.source === edge.target) return;
+            graph.setEdge(edge.source, edge.target);
+        });
+    
+        // 1) En çok bağlantısı olan node'u bul
+        const degreeMap = new Map<string, number>();
+        nodes.forEach((n) => degreeMap.set(n.id, 0));
+    
+        edges.forEach((e) => {
+            if (degreeMap.has(e.source)) {
+                degreeMap.set(e.source, (degreeMap.get(e.source) || 0) + 1);
+            }
+            if (degreeMap.has(e.target)) {
+                degreeMap.set(e.target, (degreeMap.get(e.target) || 0) + 1);
+            }
+        });
+    
+        let centerNodeId: string | null = null;
+        let maxDegree = -1;
+        degreeMap.forEach((deg, id) => {
+            if (deg > maxDegree) {
+                maxDegree = deg;
+                centerNodeId = id;
+            }
+        });
+    
+        dagre.layout(graph);
+    
+        const arrangedNodes = nodes.map((node) => {
+            const layoutNode = graph.node(node.id);
+            if (!layoutNode) return node;
+            const { width, height } = getNodeSize(node);
+            return {
+                ...node,
+                position: {
+                    x: layoutNode.x - width / 2,
+                    y: layoutNode.y - height / 2,
+                },
+            };
+        });
+    
+        // 2) En çok bağlı node'u görsel olarak ortaya taşı
+        let finalNodes = arrangedNodes;
+        if (centerNodeId) {
+            const centerNode = arrangedNodes.find((n) => n.id === centerNodeId);
+            if (centerNode) {
+                const centerX = centerNode.position.x;
+                const centerY = centerNode.position.y;
+    
+                // Örneğin ekranın (0,0) civarına alalım; istersen offset verebilirsin
+                const offsetX = -centerX;
+                const offsetY = -centerY;
+    
+                finalNodes = arrangedNodes.map((n) => ({
+                    ...n,
+                    position: {
+                        x: n.position.x + offsetX,
+                        y: n.position.y + offsetY,
+                    },
+                }));
+            }
+        }
+    
+        set({
+            nodes: finalNodes,
+            layoutVersion: layoutVersion + 1,
+        });
     },
 
     // Template CRUD
