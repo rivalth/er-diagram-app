@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useReactFlow } from '@xyflow/react';
 
 export function Toolbar() {
-    const { addTable, theme, toggleTheme, templates, past, future, undo, redo } = useDiagramStore();
+    const { addTable, theme, toggleTheme, templates, past, future, undo, redo, autoArrange } = useDiagramStore();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -42,6 +42,19 @@ export function Toolbar() {
             addTable(getCenterPosition(), template.fields);
         }
         setIsDropdownOpen(false);
+    };
+
+    const handleAutoArrange = () => {
+        autoArrange({
+            direction: 'LR',
+            nodeSep: 90,
+            rankSep: 140,
+            marginX: 60,
+            marginY: 60,
+        });
+        requestAnimationFrame(() => {
+            reactFlowInstance.fitView({ padding: 0.2, duration: 350 });
+        });
     };
 
     return (
@@ -116,6 +129,15 @@ export function Toolbar() {
                     style={{ border: 'none' }}
                 >
                     <Layout size={16} /> Templates
+                </button>
+
+                <button
+                    onClick={handleAutoArrange}
+                    className="flex items-center gap-2 text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white !bg-gray-100 dark:!bg-gray-700 hover:!bg-gray-200 dark:hover:!bg-gray-600 px-3 py-1.5 !rounded transition-all duration-150 hover:scale-[1.02] active:scale-[0.98] !border-transparent cursor-pointer"
+                    style={{ border: 'none' }}
+                    title="Auto Arrange Nodes"
+                >
+                    <Layout size={16} /> Auto Arrange
                 </button>
 
                 <button
