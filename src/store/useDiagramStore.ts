@@ -503,32 +503,54 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     autoArrange: (options) => {
         const { nodes, edges, saveHistory, layoutVersion } = get();
         if (!nodes.length) return;
-
+    
         saveHistory();
-
+    
         const graph = new dagre.graphlib.Graph();
         graph.setDefaultEdgeLabel(() => ({}));
         graph.setGraph({
             rankdir: options?.direction ?? 'LR',
-            nodesep: options?.nodeSep ?? 80,
-            ranksep: options?.rankSep ?? 140,
-            marginx: options?.marginX ?? 60,
-            marginy: options?.marginY ?? 60,
+            nodesep: options?.nodeSep ?? 150,
+            ranksep: options?.rankSep ?? 200,
+            marginx: options?.marginX ?? 200,
+            marginy: options?.marginY ?? 200,
         });
-
+    
         const nodeIds = new Set(nodes.map((node) => node.id));
         nodes.forEach((node) => {
             const size = getNodeSize(node);
             graph.setNode(node.id, size);
         });
-
+    
         edges.forEach((edge) => {
             if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target) || edge.source === edge.target) return;
             graph.setEdge(edge.source, edge.target);
         });
-
+    
+        // 1) En çok bağlantısı olan node'u bul
+        const degreeMap = new Map<string, number>();
+        nodes.forEach((n) => degreeMap.set(n.id, 0));
+    
+        edges.forEach((e) => {
+            if (degreeMap.has(e.source)) {
+                degreeMap.set(e.source, (degreeMap.get(e.source) || 0) + 1);
+            }
+            if (degreeMap.has(e.target)) {
+                degreeMap.set(e.target, (degreeMap.get(e.target) || 0) + 1);
+            }
+        });
+    
+        let centerNodeId: string | null = null;
+        let maxDegree = -1;
+        degreeMap.forEach((deg, id) => {
+            if (deg > maxDegree) {
+                maxDegree = deg;
+                centerNodeId = id;
+            }
+        });
+    
         dagre.layout(graph);
-
+    
         const arrangedNodes = nodes.map((node) => {
             const layoutNode = graph.node(node.id);
             if (!layoutNode) return node;
@@ -541,9 +563,31 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
                 },
             };
         });
-
+    
+        // 2) En çok bağlı node'u görsel olarak ortaya taşı
+        let finalNodes = arrangedNodes;
+        if (centerNodeId) {
+            const centerNode = arrangedNodes.find((n) => n.id === centerNodeId);
+            if (centerNode) {
+                const centerX = centerNode.position.x;
+                const centerY = centerNode.position.y;
+    
+                // Örneğin ekranın (0,0) civarına alalım; istersen offset verebilirsin
+                const offsetX = -centerX;
+                const offsetY = -centerY;
+    
+                finalNodes = arrangedNodes.map((n) => ({
+                    ...n,
+                    position: {
+                        x: n.position.x + offsetX,
+                        y: n.position.y + offsetY,
+                    },
+                }));
+            }
+        }
+    
         set({
-            nodes: arrangedNodes,
+            nodes: finalNodes,
             layoutVersion: layoutVersion + 1,
         });
     },
